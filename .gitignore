@@ -1,0 +1,4 @@
+.idea/
+*.o
+sikradio-receiver
+sikradio-sender
