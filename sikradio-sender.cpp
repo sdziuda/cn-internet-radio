@@ -8,6 +8,7 @@
 
 using namespace std;
 namespace po = boost::program_options;
+using byte_t = uint8_t;
 
 void read_program_options(int argc, char *argv[], string &address, string &port,
                           size_t &psize) {
@@ -52,7 +53,7 @@ int main(int argc, char *argv[]) {
 
     char *addr = (char *) address_input.c_str();
     char *port = (char *) port_input.c_str();
-    char buffer[psize + sizeof(uint64_t) * 2];
+    byte_t buffer[psize + sizeof(uint64_t) * 2];
     memset(buffer, 0, sizeof(buffer));
 
     uint16_t port_num = read_port(port);
@@ -72,17 +73,28 @@ int main(int argc, char *argv[]) {
 
     while (true) {
         uint64_t net_first_byte_num = htonl(first_byte_num);
-        memcpy(buffer + sizeof(net_session_id), &net_first_byte_num, sizeof(net_first_byte_num));
+        memcpy(buffer + sizeof(uint64_t), &net_first_byte_num, sizeof(uint64_t));
 
-        ssize_t read_bytes = read(STDIN_FILENO, buffer + sizeof(net_session_id) + sizeof(net_first_byte_num), psize - 1);
-        cerr << "read_bytes: " << read_bytes << endl;
-        if (read_bytes < 0) {
-            perror("read error");
-            exit(1);
-        } else if ((size_t) read_bytes < psize - 1) {
+        ssize_t read_bytes = 0;
+        for (size_t i = 0; i < psize - 1; i++) {
+            byte_t byte;
+            ssize_t read_byte = read(STDIN_FILENO, &byte, sizeof(byte_t));
+            if (read_byte < 0) {
+                perror("read error");
+                exit(1);
+            } else if (read_byte == 0) {
+                break;
+            }
+
+            buffer[sizeof(uint64_t) * 2 + i] = byte;
+            read_bytes += read_byte;
+        }
+
+        if ((size_t) read_bytes < psize - 1) {
             break;
         }
-        buffer[psize - 1] = '\0';
+
+        buffer[sizeof(uint64_t) * 2 + psize - 1] = '\0';
 
         send_message(socket_fd, &send_address, &buffer, sizeof(buffer));
 
