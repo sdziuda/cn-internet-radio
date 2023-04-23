@@ -70,13 +70,15 @@ int main(int argc, char *argv[]) {
             memcpy(&session_id, buffer, sizeof(uint64_t));
             session_id = ntohl(session_id);
             cerr << "session_id: " << session_id << endl;
+
             uint64_t first_byte_num;
             memcpy(&first_byte_num, buffer + sizeof(uint64_t), sizeof(uint64_t));
             first_byte_num = ntohl(first_byte_num);
             cerr << "first_byte_num: " << first_byte_num << endl;
+
             cerr << "psize: " << psize << endl;
 
-            cerr.write(buffer + sizeof(uint64_t) * 2, psize);
+            cout.write(buffer + sizeof(uint64_t) * 2, psize);
         }
     } while (read_length > 0);
 
