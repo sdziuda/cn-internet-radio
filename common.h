@@ -12,6 +12,10 @@
 
 #include "err.h"
 
+#define DEFAULT_PORT "28422"
+
+using byte_t = uint8_t;
+
 inline static uint16_t read_port(char *string) {
     errno = 0;
     unsigned long port = strtoul(string, nullptr, 10);

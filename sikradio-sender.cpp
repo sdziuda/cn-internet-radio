@@ -2,13 +2,11 @@
 #include <iostream>
 #include "common.h"
 
-#define DEFAULT_PORT "28422"
 #define DEFAULT_PSIZE 512
 #define DEFAULT_NAME "Nienazwany nadajnik"
 
 using namespace std;
 namespace po = boost::program_options;
-using byte_t = uint8_t;
 
 void read_program_options(int argc, char *argv[], string &address, string &port,
                           size_t &psize) {
@@ -66,7 +64,6 @@ int main(int argc, char *argv[]) {
     }
 
     uint64_t session_id = time(nullptr);
-    cerr << "session_id: " << session_id << endl;
     uint64_t net_session_id = htonl(session_id);
     uint64_t first_byte_num = 0;
     memcpy(buffer, &net_session_id, sizeof(net_session_id));
@@ -75,14 +72,11 @@ int main(int argc, char *argv[]) {
         uint64_t net_first_byte_num = htonl(first_byte_num);
         memcpy(buffer + sizeof(uint64_t), &net_first_byte_num, sizeof(uint64_t));
 
-        ssize_t read_bytes = 0;
-        for (size_t i = 0; i < psize - 1; i++) {
+        size_t read_bytes = 0;
+        for (size_t i = 0; i < psize; i++) {
             byte_t byte;
-            ssize_t read_byte = read(STDIN_FILENO, &byte, sizeof(byte_t));
-            if (read_byte < 0) {
-                perror("read error");
-                exit(1);
-            } else if (read_byte == 0) {
+            size_t read_byte = fread(&byte, sizeof(byte_t), 1, stdin);
+            if (read_byte == 0) {
                 break;
             }
 
@@ -90,11 +84,9 @@ int main(int argc, char *argv[]) {
             read_bytes += read_byte;
         }
 
-        if ((size_t) read_bytes < psize - 1) {
+        if (read_bytes < psize) {
             break;
         }
-
-        buffer[sizeof(uint64_t) * 2 + psize - 1] = '\0';
 
         send_message(socket_fd, &send_address, &buffer, sizeof(buffer));
 
