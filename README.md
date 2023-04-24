@@ -9,3 +9,9 @@ Example usage with `sox` and `pv`:
 Example usage with `play`:
 
 `./sikradio-receiver -a [sender_address] | play -t raw -c 2 -r 44100 -b 16 -e signed-integer --buffer 32768 -`
+
+# Netcat receiver
+
+Example usage with netcat instead of receiver:
+
+`nc -4 -u -l 28422 > output.raw`
