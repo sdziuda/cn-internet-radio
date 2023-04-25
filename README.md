@@ -10,6 +10,10 @@ Example usage with `play`:
 
 `./sikradio-receiver -a [sender_address] | play -t raw -c 2 -r 44100 -b 16 -e signed-integer --buffer 32768 -`
 
+### Recording to file
+
+Just add `parec out.wav` to the pipeline after `play`.
+
 # Netcat receiver
 
 Example usage with netcat instead of receiver:
