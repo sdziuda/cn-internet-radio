@@ -60,6 +60,7 @@ int main(int argc, char *argv[]) {
     size_t psize = 0;
     uint64_t session_id = 0;
     uint64_t byte_0 = 0;
+    set<uint64_t> received_packets;
 
     do {
         read_length = read_message(socket_fd, &sender_address, buffer, sizeof(buffer));
@@ -82,20 +83,24 @@ int main(int argc, char *argv[]) {
                 session_id = tmp_id;
                 byte_0 = first_byte_num;
                 psize = read_length - sizeof(uint64_t) * 2;
+                received_packets.insert(first_byte_num);
             } else if (session_id > tmp_id) {
                 continue;
             } else if (session_id < tmp_id) {
                 session_id = 0;
+                received_packets.clear();
                 memset(buffer, 0, sizeof(buffer));
                 continue;
             } else {
+                received_packets.insert(first_byte_num);
                 size_t header_len = sizeof(uint64_t) * 2 + psize;
                 size_t buf_position = first_byte_num - byte_0 + header_len;
                 memcpy(buffer + buf_position, buffer + sizeof(uint64_t) * 2, psize);
-                for (size_t i = sizeof(uint64_t) * 2; i < buf_position; i += psize) {
-                    if (buffer[i] == 0) {
-                        cerr << "MISSING: BEFORE " << first_byte_num << " EXPECTED "
-                             << first_byte_num - (buf_position - i) << endl;
+
+                for (uint64_t i = byte_0; i < first_byte_num; i += psize) {
+                    if (received_packets.find(i) == received_packets.end()) {
+                        cerr << "MISSING: BEFORE " << first_byte_num
+                             << " EXPECTED " << i << endl;
                     }
                 }
 
