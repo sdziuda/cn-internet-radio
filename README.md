@@ -12,7 +12,7 @@ Example usage with `play`:
 
 ### Recording to file
 
-Just add `parec out.wav` to the pipeline after `play`.
+Just add `parec out.raw` to the pipeline after `play`.
 
 # Netcat receiver
 
