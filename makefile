@@ -1,4 +1,4 @@
-CFLAGS = -Wall -O2 -std=c++20 -I/usr/local/boost_1_82_0
+CFLAGS = -Wall -O2 -std=c++20 -pthread -I/usr/local/boost_1_82_0
 CC = g++
 PO_FILE = /usr/local/boost_1_82_0/libs/program_options/build/libboost_program_options.a
 
