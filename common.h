@@ -8,6 +8,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdint.h>
+#include <signal.h>
 #include <arpa/inet.h>
 
 #include "err.h"
@@ -89,6 +90,18 @@ size_t read_message(int socket_fd, struct sockaddr_in *client_address,
         PRINT_ERRNO();
     }
     return (size_t) len;
+}
+
+inline static void install_signal_handler(int signal, void (*handler)(int), int flags) {
+    struct sigaction action;
+    sigset_t block_mask;
+
+    sigemptyset(&block_mask);
+    action.sa_handler = handler;
+    action.sa_mask = block_mask;
+    action.sa_flags = flags;
+
+    CHECK_ERRNO(sigaction(signal, &action, NULL));
 }
 
 #endif //MIMUW_SIK_TCP_SOCKETS_COMMON_H
