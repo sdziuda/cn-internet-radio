@@ -72,17 +72,8 @@ int main(int argc, char *argv[]) {
         uint64_t net_first_byte_num = htonl(first_byte_num);
         memcpy(buffer + sizeof(uint64_t), &net_first_byte_num, sizeof(uint64_t));
 
-        size_t read_bytes = 0;
-        for (size_t i = 0; i < psize; i++) {
-            byte_t byte;
-            size_t read_byte = fread(&byte, sizeof(byte_t), 1, stdin);
-            if (read_byte == 0) {
-                break;
-            }
-
-            buffer[sizeof(uint64_t) * 2 + i] = byte;
-            read_bytes += read_byte;
-        }
+        size_t read_bytes = fread(buffer + sizeof(uint64_t) * 2, sizeof(byte_t),
+                                  psize, stdin);
 
         if (read_bytes < psize) {
             break;
