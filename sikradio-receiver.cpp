@@ -12,13 +12,14 @@ using namespace std;
 namespace po = boost::program_options;
 
 static bool finish = false;
+static bool p_finish = false;
 byte_t *buffer;
 mutex buffer_mutex;
-bool new_session = true;
 size_t written_to_buffer = 0;
 
 static void catch_int(int sig) {
     finish = true;
+    p_finish = true;
     cerr << "Signal " << sig << " caught, exiting..." << endl;
 }
 
@@ -59,19 +60,21 @@ void print_buffer(size_t bsize, size_t psize) {
 
     unique_lock<mutex> lock(buffer_mutex, defer_lock);
 
-    while (!finish && !new_session) {
+    while (true) {
         lock.lock();
-        fwrite(buffer + it, sizeof(byte_t), psize, stdout);
-        lock.unlock();
+        if (p_finish) return;
 
-        written_from_buffer += psize;
-        it += psize;
-        if (it + psize >= bsize) {
-            it = 0;
+        if (written_from_buffer <= written_to_buffer) {
+            fwrite(buffer + it, sizeof(byte_t), psize, stdout);
+            memset(buffer + it, 0, psize);
+
+            written_from_buffer += psize;
+            it += psize;
+            if (it + psize >= bsize) {
+                it = 0;
+            }
         }
-        while (written_from_buffer >= written_to_buffer) {
-            this_thread::sleep_for(chrono::milliseconds(10));
-        }
+        lock.unlock();
     }
 }
 
@@ -79,7 +82,7 @@ int main(int argc, char *argv[]) {
     string address_input, port_input;
     size_t bsize;
 
-//    install_signal_handler(SIGINT, catch_int, SA_RESTART);
+    install_signal_handler(SIGINT, catch_int, SA_RESTART);
 
     read_program_options(argc, argv, address_input, port_input, bsize);
     cerr << "a: " << address_input << endl;
@@ -105,6 +108,7 @@ int main(int argc, char *argv[]) {
     thread printer;
     bool p_started = false;
     set<uint64_t> received_packets;
+    unique_lock<mutex> lock(buffer_mutex, defer_lock);
 
     do {
         read_length = read_message(socket_fd, &sender_address, rcv_buffer,
@@ -118,29 +122,38 @@ int main(int argc, char *argv[]) {
 
             uint64_t tmp_id;
             memcpy(&tmp_id, rcv_buffer, sizeof(uint64_t));
-            tmp_id = ntohl(tmp_id);
+            tmp_id = ntohll(tmp_id);
 
             uint64_t first_byte_num;
             memcpy(&first_byte_num, rcv_buffer + sizeof(uint64_t), sizeof(uint64_t));
-            first_byte_num = ntohl(first_byte_num);
+            first_byte_num = ntohll(first_byte_num);
 
             if (session_id == 0) {
                 session_id = tmp_id;
                 byte_0 = first_byte_num;
                 psize = read_length - sizeof(uint64_t) * 2;
-                new_session = false;
                 written_to_buffer = 0;
             } else if (session_id > tmp_id) {
                 continue;
             } else if (session_id < tmp_id) {
                 session_id = 0;
                 received_packets.clear();
-                new_session = true;
+                lock.lock();
+                p_finish = true;
+                lock.unlock();
                 printer.join();
                 p_started = false;
                 memset(buffer, 0, bsize * sizeof(byte_t));
                 continue;
             }
+
+            lock.lock();
+            if (written_to_buffer > bsize && first_byte_num < written_to_buffer - bsize) {
+                cerr << "Received package too old, skipping" << endl;
+                lock.unlock();
+                continue;
+            }
+            lock.unlock();
 
             received_packets.insert(first_byte_num);
             uint64_t earliest = max(byte_0, first_byte_num - bsize + (bsize % psize));
@@ -159,23 +172,25 @@ int main(int argc, char *argv[]) {
                 buf_position = 0;
             }
 
-            unique_lock<mutex> lock(buffer_mutex);
+            lock.lock();
             memcpy(buffer + buf_position, rcv_buffer + sizeof(uint64_t) * 2,
                    read_length - sizeof(uint64_t) * 2);
-            lock.unlock();
-
             if (first_byte_num - byte_0 > written_to_buffer) {
                 written_to_buffer = first_byte_num - byte_0;
             }
+            lock.unlock();
 
             if (first_byte_num >= byte_0 + ((3 * bsize) / 4) && !p_started) {
                 p_started = true;
+                p_finish = false;
                 printer = thread(print_buffer, bsize, psize);
             }
-
         }
-    } while (!finish && read_length > 0);
+    } while (!finish);
 
+    lock.lock();
+    p_finish = true;
+    lock.unlock();
     if (p_started) {
         printer.join();
     }
