@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <signal.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
 
 #include "err.h"
 
@@ -28,10 +29,29 @@ inline static uint16_t read_port(char *string) {
     return (uint16_t) port;
 }
 
+uint64_t htonll(uint64_t x) {
+#if __BIG_ENDIAN__
+    return x;
+#else
+    return ((uint64_t)htonl((x) & 0xFFFFFFFFLL) << 32) | htonl((x) >> 32);
+#endif
+}
+
+uint64_t ntohll(uint64_t x) {
+#if __BIG_ENDIAN__
+    return x;
+#else
+    return ((uint64_t)ntohl((x) & 0xFFFFFFFFLL) << 32) | ntohl((x) >> 32);
+#endif
+}
+
 int bind_socket(uint16_t port) {
     int socket_fd = socket(AF_INET, SOCK_DGRAM, 0); // creating IPv4 UDP socket
     ENSURE(socket_fd >= 0);
     // after socket() call; we should close(sock) on any execution path;
+
+    // making the socket non-blocking
+    fcntl(socket_fd, F_SETFL, O_NONBLOCK);
 
     struct sockaddr_in server_address;
     server_address.sin_family = AF_INET; // IPv4
@@ -86,6 +106,9 @@ size_t read_message(int socket_fd, struct sockaddr_in *client_address,
     errno = 0;
     ssize_t len = recvfrom(socket_fd, buffer, max_length, flags,
                            (struct sockaddr *) client_address, &address_length);
+    if (errno == EAGAIN) {
+        return 0;
+    }
     if (len < 0) {
         PRINT_ERRNO();
     }

@@ -64,12 +64,12 @@ int main(int argc, char *argv[]) {
     }
 
     uint64_t session_id = time(nullptr);
-    uint64_t net_session_id = htonl(session_id);
+    uint64_t net_session_id = htonll(session_id);
     uint64_t first_byte_num = 0;
     memcpy(buffer, &net_session_id, sizeof(net_session_id));
 
     while (true) {
-        uint64_t net_first_byte_num = htonl(first_byte_num);
+        uint64_t net_first_byte_num = htonll(first_byte_num);
         memcpy(buffer + sizeof(uint64_t), &net_first_byte_num, sizeof(uint64_t));
 
         size_t read_bytes = fread(buffer + sizeof(uint64_t) * 2, sizeof(byte_t),
