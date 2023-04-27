@@ -3,33 +3,36 @@
 #include <csignal>
 #include <thread>
 #include <mutex>
+#include <cstring>
+#include <sys/socket.h>
+#include <cstdio>
 #include "common.h"
 
 #define DEFAULT_BSIZE 65536
 #define UDP_MAX_SIZE 65507
 
-using namespace std;
+using std::string;
 namespace po = boost::program_options;
 
 static bool finish = false;
 static bool p_finish = false;
 byte_t *buffer;
-mutex buffer_mutex;
+std::mutex buffer_mutex;
 size_t written_to_buffer = 0;
 
 static void catch_int(int sig) {
     finish = true;
     p_finish = true;
-    cerr << "Signal " << sig << " caught, exiting..." << endl;
+    std::cerr << "Signal " << sig << " caught, exiting..." << std::endl;
 }
 
 void read_program_options(int argc, char *argv[], string &address, string &port,
                           size_t &bsize) {
     if (argc < 2) {
-        cerr << "usage: " << argv[0] << " -a [address: required] "
-                                        "-P [port: default 28422] "
-                                        "-b [BSIZE: default 65536]"
-                                        << endl;
+        std::cerr << "usage: " << argv[0] << " -a [address: required] "
+                                             "-P [port: default 28422] "
+                                             "-b [BSIZE: default 65536]"
+                                             << std::endl;
         exit(1);
     }
 
@@ -45,7 +48,7 @@ void read_program_options(int argc, char *argv[], string &address, string &port,
     po::notify(vm);
 
     if (vm.count("a") == 0) {
-        cerr << "error: missing address" << endl;
+        std::cerr << "error: missing address" << std::endl;
         exit(1);
     }
 
@@ -58,7 +61,7 @@ void print_buffer(size_t bsize, size_t psize) {
     size_t it = 0;
     size_t written_from_buffer = 0;
 
-    unique_lock<mutex> lock(buffer_mutex, defer_lock);
+    std::unique_lock<std::mutex> lock(buffer_mutex, std::defer_lock);
 
     while (true) {
         lock.lock();
@@ -85,9 +88,6 @@ int main(int argc, char *argv[]) {
     install_signal_handler(SIGINT, catch_int, SA_RESTART);
 
     read_program_options(argc, argv, address_input, port_input, bsize);
-    cerr << "a: " << address_input << endl;
-    cerr << "P: " << port_input << endl;
-    cerr << "b: " << bsize << endl;
 
     char *addr = (char *) address_input.c_str();
     char *port = (char *) port_input.c_str();
@@ -105,10 +105,10 @@ int main(int argc, char *argv[]) {
     size_t psize = 0;
     uint64_t session_id = 0;
     uint64_t byte_0 = 0;
-    thread printer;
+    std::thread printer;
     bool p_started = false;
-    set<uint64_t> received_packets;
-    unique_lock<mutex> lock(buffer_mutex, defer_lock);
+    std::set<uint64_t> received_packets;
+    std::unique_lock<std::mutex> lock(buffer_mutex, std::defer_lock);
 
     do {
         read_length = read_message(socket_fd, &sender_address, rcv_buffer,
@@ -116,7 +116,7 @@ int main(int argc, char *argv[]) {
         if (read_length > 0) {
             if (strcmp(inet_ntoa(source_address.sin_addr),
                        inet_ntoa(sender_address.sin_addr)) != 0) {
-                cerr << "Received packet from wrong address, skipping" << endl;
+                std::cerr << "Received packet from wrong address, skipping" << std::endl;
                 continue;
             }
 
@@ -138,29 +138,36 @@ int main(int argc, char *argv[]) {
             } else if (session_id < tmp_id) {
                 session_id = 0;
                 received_packets.clear();
+
                 lock.lock();
                 p_finish = true;
                 lock.unlock();
                 printer.join();
                 p_started = false;
+
                 memset(buffer, 0, bsize * sizeof(byte_t));
                 continue;
             }
 
             lock.lock();
             if (written_to_buffer > bsize && first_byte_num < written_to_buffer - bsize) {
-                cerr << "Received package too old, skipping" << endl;
+                std::cerr << "Received package too old, skipping" << std::endl;
                 lock.unlock();
                 continue;
             }
             lock.unlock();
 
             received_packets.insert(first_byte_num);
-            uint64_t earliest = max(byte_0, first_byte_num - bsize + (bsize % psize));
+            uint64_t earliest;
+            if (first_byte_num < bsize) {
+                earliest = byte_0;
+            } else {
+                earliest = std::max(byte_0, first_byte_num - bsize + (bsize % psize));
+            }
             for (uint64_t i = earliest; i < first_byte_num; i += psize) {
                 if (received_packets.find(i) == received_packets.end()) {
-                    cerr << "MISSING: BEFORE " << first_byte_num
-                         << " EXPECTED " << i << endl;
+                   std::cerr << "MISSING: BEFORE " << first_byte_num
+                             << " EXPECTED " << i << std::endl;
                 }
             }
 
@@ -183,7 +190,7 @@ int main(int argc, char *argv[]) {
             if (first_byte_num >= byte_0 + ((3 * bsize) / 4) && !p_started) {
                 p_started = true;
                 p_finish = false;
-                printer = thread(print_buffer, bsize, psize);
+                printer = std::thread(print_buffer, bsize, psize);
             }
         }
     } while (!finish);

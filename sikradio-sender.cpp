@@ -1,21 +1,25 @@
 #include <boost/program_options.hpp>
 #include <iostream>
+#include <cstring>
+#include <sys/socket.h>
+#include <ctime>
+#include <cstdio>
 #include "common.h"
 
 #define DEFAULT_PSIZE 512
 #define DEFAULT_NAME "Nienazwany nadajnik"
 
-using namespace std;
+using std::string;
 namespace po = boost::program_options;
 
 void read_program_options(int argc, char *argv[], string &address, string &port,
                           size_t &psize) {
     if (argc < 2) {
-        cerr << "usage: " << argv[0] << " -a [address: required] "
-                                        "-p [PSIZE: default 512] "
-                                        "-P [port: default 28422] "
-                                        "-n [name: default Nienazwany nadajnik]"
-                                        << endl;
+        std::cerr << "usage: " << argv[0] << " -a [address: required] "
+                                             "-p [PSIZE: default 512] "
+                                             "-P [port: default 28422] "
+                                             "-n [name: default Nienazwany nadajnik]"
+                                             << std::endl;
         exit(1);
     }
 
@@ -31,7 +35,7 @@ void read_program_options(int argc, char *argv[], string &address, string &port,
     po::notify(vm);
 
     if (vm.count("a") == 0) {
-        cerr << "error: missing address" << endl;
+        std::cerr << "error: missing address" << std::endl;
         exit(1);
     }
 
@@ -45,9 +49,6 @@ int main(int argc, char *argv[]) {
     size_t psize;
 
     read_program_options(argc, argv, address_input, port_input, psize);
-    cerr << "a: " << address_input << endl;
-    cerr << "P: " << port_input << endl;
-    cerr << "p: " << psize << endl;
 
     char *addr = (char *) address_input.c_str();
     char *port = (char *) port_input.c_str();
