@@ -14,15 +14,17 @@
 using std::string;
 namespace po = boost::program_options;
 
+const char BLANK = 0;
+
 static bool finish = false;
 static bool p_finish = false;
 byte_t *buffer;
 std::mutex buffer_mutex;
 size_t written_to_buffer = 0;
+std::set<uint64_t> received_packets;
 
 static void catch_int(int sig) {
     finish = true;
-    p_finish = true;
     std::cerr << "Signal " << sig << " caught, exiting..." << std::endl;
 }
 
@@ -68,8 +70,14 @@ void print_buffer(size_t bsize, size_t psize) {
         if (p_finish) return;
 
         if (written_from_buffer <= written_to_buffer) {
-            fwrite(buffer + it, sizeof(byte_t), psize, stdout);
-            memset(buffer + it, 0, psize);
+            if (received_packets.find(written_from_buffer) != received_packets.end()) {
+                fwrite(buffer + it, sizeof(byte_t), psize, stdout);
+                memset(buffer + it, BLANK, psize);
+            } else {
+                for (size_t i = 0; i < psize; i++) {
+                    std::cout << BLANK;
+                }
+            }
 
             written_from_buffer += psize;
             it += psize;
@@ -94,7 +102,7 @@ int main(int argc, char *argv[]) {
 
     buffer = new byte_t[bsize];
     byte_t rcv_buffer[UDP_MAX_SIZE];
-    memset(buffer, 0, bsize * sizeof(byte_t));
+    memset(buffer, BLANK, bsize * sizeof(byte_t));
     memset(rcv_buffer, 0, sizeof(rcv_buffer));
 
     uint16_t port_num = read_port(port);
@@ -104,18 +112,21 @@ int main(int argc, char *argv[]) {
     size_t read_length;
     size_t psize = 0;
     uint64_t session_id = 0;
+    bool session_set = false;
     uint64_t byte_0 = 0;
     std::thread printer;
     bool p_started = false;
-    std::set<uint64_t> received_packets;
     std::unique_lock<std::mutex> lock(buffer_mutex, std::defer_lock);
 
     do {
         read_length = read_message(socket_fd, &sender_address, rcv_buffer,
                                    sizeof(rcv_buffer));
         if (read_length > 0) {
-            if (strcmp(inet_ntoa(source_address.sin_addr),
-                       inet_ntoa(sender_address.sin_addr)) != 0) {
+            if (read_length < 16) {
+                std::cerr << "Received packet of wrong size, skipping" << std::endl;
+                continue;
+            }
+            if (source_address.sin_addr.s_addr != sender_address.sin_addr.s_addr) {
                 std::cerr << "Received packet from wrong address, skipping" << std::endl;
                 continue;
             }
@@ -128,24 +139,30 @@ int main(int argc, char *argv[]) {
             memcpy(&first_byte_num, rcv_buffer + sizeof(uint64_t), sizeof(uint64_t));
             first_byte_num = ntohll(first_byte_num);
 
-            if (session_id == 0) {
+            if (!session_set) {
                 session_id = tmp_id;
+                session_set = true;
                 byte_0 = first_byte_num;
                 psize = read_length - sizeof(uint64_t) * 2;
                 written_to_buffer = 0;
             } else if (session_id > tmp_id) {
                 continue;
             } else if (session_id < tmp_id) {
-                session_id = 0;
-                received_packets.clear();
+                session_set = false;
 
                 lock.lock();
                 p_finish = true;
+                received_packets.clear();
                 lock.unlock();
                 printer.join();
                 p_started = false;
 
-                memset(buffer, 0, bsize * sizeof(byte_t));
+                memset(buffer, BLANK, bsize * sizeof(byte_t));
+                continue;
+            }
+
+            if (read_length != psize + sizeof(uint64_t) * 2) {
+                std::cerr << "Received packet of wrong size, skipping" << std::endl;
                 continue;
             }
 
@@ -155,9 +172,9 @@ int main(int argc, char *argv[]) {
                 lock.unlock();
                 continue;
             }
+            received_packets.insert(first_byte_num);
             lock.unlock();
 
-            received_packets.insert(first_byte_num);
             uint64_t earliest;
             if (first_byte_num < bsize) {
                 earliest = byte_0;
@@ -165,10 +182,12 @@ int main(int argc, char *argv[]) {
                 earliest = std::max(byte_0, first_byte_num - bsize + (bsize % psize));
             }
             for (uint64_t i = earliest; i < first_byte_num; i += psize) {
+                lock.lock();
                 if (received_packets.find(i) == received_packets.end()) {
                    std::cerr << "MISSING: BEFORE " << first_byte_num
                              << " EXPECTED " << i << std::endl;
                 }
+                lock.unlock();
             }
 
             size_t buf_position = first_byte_num - byte_0;
