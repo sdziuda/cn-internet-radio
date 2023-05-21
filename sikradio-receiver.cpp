@@ -8,8 +8,11 @@
 #include <cstdio>
 #include "common.h"
 
+#define DEFAULT_DISCOVER "255.255.255.255"
+#define DEFAULT_UI "18422"
+#define DEFAULT_PORT "28422"
 #define DEFAULT_BSIZE 65536
-#define UDP_MAX_SIZE 65507
+#define DEFAULT_NAME ""
 
 using std::string;
 namespace po = boost::program_options;
@@ -28,35 +31,53 @@ static void catch_int(int sig) {
     std::cerr << "Signal " << sig << " caught, exiting..." << std::endl;
 }
 
-void read_program_options(int argc, char *argv[], string &address, string &port,
-                          size_t &bsize) {
+void helpAndExit(string name) {
+    std::cerr << "usage: " << name << " -d [discovery_address: default "
+              << DEFAULT_DISCOVER << "] " << "-C [control_port: default "
+              << DEFAULT_CONTROL << "] -U [ui_port: default " << DEFAULT_UI
+              << "] -b [BSIZE: default " << DEFAULT_BSIZE << "] -R [RTIME: "
+              <<"default " << DEFAULT_RTIME << "] -n [name: default None]"
+              << std::endl;
+    exit(1);
+}
+
+void read_program_options(int argc, char *argv[], string &d_address, string &c_port,
+                          string &u_port, size_t &bsize, uint64_t &rtime, string &name,
+                          string &address, string &port) {
     if (argc < 2) {
-        std::cerr << "usage: " << argv[0] << " -a [address: required] "
-                                             "-P [port: default 28422] "
-                                             "-b [BSIZE: default 65536]"
-                                             << std::endl;
-        exit(1);
+        helpAndExit(argv[0]);
     }
 
     po::options_description desc("Program options");
 
     desc.add_options()
-        ("a,a", po::value<string>(), "address")
-        ("P,P", po::value<string>()->default_value(DEFAULT_PORT), "port")
-        ("b,b", po::value<size_t>()->default_value(DEFAULT_BSIZE), "BSIZE");
+        ("d,d", po::value<string>()->default_value(DEFAULT_DISCOVER), "discovery address")
+        ("C,C", po::value<string>()->default_value(DEFAULT_CONTROL), "control port")
+        ("U,U", po::value<string>()->default_value(DEFAULT_UI), "ui port")
+        ("b,b", po::value<size_t>()->default_value(DEFAULT_BSIZE), "BSIZE")
+        ("R,R", po::value<uint64_t>()->default_value(DEFAULT_RTIME), "RTIME")
+        ("n,n", po::value<string>()->default_value(DEFAULT_NAME), "name")
+        ("a,a", po::value<string>(), "multicast address")
+        ("P,P", po::value<string>()->default_value(DEFAULT_PORT), "data port");
 
     po::variables_map vm;
-    po::store(po::parse_command_line(argc, argv, desc), vm);
-    po::notify(vm);
 
-    if (vm.count("a") == 0) {
-        std::cerr << "error: missing address" << std::endl;
+    try {
+        po::store(po::parse_command_line(argc, argv, desc), vm);
+        po::notify(vm);
+    } catch (std::exception &e) {
+        std::cerr << "error: " << e.what() << std::endl;
         exit(1);
     }
 
+    d_address = vm["d"].as<string>();
+    c_port = vm["C"].as<string>();
+    u_port = vm["U"].as<string>();
+    bsize = vm["b"].as<size_t>();
+    rtime = vm["R"].as<uint64_t>();
+    name = vm["n"].as<string>();
     address = vm["a"].as<string>();
     port = vm["P"].as<string>();
-    bsize = vm["b"].as<size_t>();
 }
 
 void print_buffer(size_t bsize, size_t psize) {
@@ -90,24 +111,45 @@ void print_buffer(size_t bsize, size_t psize) {
 }
 
 int main(int argc, char *argv[]) {
-    string address_input, port_input;
+    string d_address_input, c_port_input, u_port_input, name_input, address_input, d_port_input;
     size_t bsize;
+    uint64_t rtime;
 
     install_signal_handler(SIGINT, catch_int, SA_RESTART);
 
-    read_program_options(argc, argv, address_input, port_input, bsize);
+    read_program_options(argc, argv, d_address_input, c_port_input, u_port_input,
+                         bsize, rtime, name_input, address_input, d_port_input);
 
     char *addr = (char *) address_input.c_str();
-    char *port = (char *) port_input.c_str();
+    char *d_addr = (char *) d_address_input.c_str();
+    char *d_port = (char *) d_port_input.c_str();
+    char *c_port = (char *) c_port_input.c_str();
+    char *u_port = (char *) u_port_input.c_str();
 
     buffer = new byte_t[bsize];
     byte_t rcv_buffer[UDP_MAX_SIZE];
     memset(buffer, BLANK, bsize * sizeof(byte_t));
     memset(rcv_buffer, 0, sizeof(rcv_buffer));
 
-    uint16_t port_num = read_port(port);
-    int socket_fd = bind_socket(port_num);
-    struct sockaddr_in source_address = get_address(addr, 0);
+    uint16_t d_port_num = read_port(d_port);
+    int socket_fd = open_udp_socket();
+    struct ip_mreq ip_mreq;
+    ip_mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+    if (inet_aton(addr, &ip_mreq.imr_multiaddr) == 0) {
+        fatal("inet_aton - invalid multicast address\n");
+    }
+
+    CHECK_ERRNO(setsockopt(socket_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void*)&ip_mreq,
+                           sizeof(ip_mreq)));
+    bind_socket(socket_fd, d_port_num);
+
+    uint16_t c_port_num = read_port(c_port);
+    struct sockaddr_in c_address = get_address(d_addr, c_port_num);
+    int c_socket_fd = open_udp_socket();
+    int optval = 1;
+    CHECK_ERRNO(setsockopt(c_socket_fd, SOL_SOCKET, SO_BROADCAST, (void *)&optval,
+                           sizeof optval));
+
     struct sockaddr_in sender_address{};
     size_t read_length;
     size_t psize = 0;
@@ -124,10 +166,6 @@ int main(int argc, char *argv[]) {
         if (read_length > 0) {
             if (read_length < 16) {
                 std::cerr << "Received packet of wrong size, skipping" << std::endl;
-                continue;
-            }
-            if (source_address.sin_addr.s_addr != sender_address.sin_addr.s_addr) {
-                std::cerr << "Received packet from wrong address, skipping" << std::endl;
                 continue;
             }
 
@@ -201,10 +239,22 @@ int main(int argc, char *argv[]) {
             lock.lock();
             memcpy(buffer + buf_position, rcv_buffer + sizeof(uint64_t) * 2,
                    read_length - sizeof(uint64_t) * 2);
+            int msg_size = read_length - sizeof(uint64_t) * 2;
+            std::cout.write((char *) (buffer + buf_position), msg_size);
             if (first_byte_num - byte_0 > written_to_buffer) {
                 written_to_buffer = first_byte_num - byte_0;
             }
             lock.unlock();
+
+            char *c_msg = new char[7];
+            c_msg[0] = 'L';
+            c_msg[1] = 'O';
+            c_msg[2] = 'O';
+            c_msg[3] = 'K';
+            c_msg[4] = 'U';
+            c_msg[5] = 'P';
+            c_msg[6] = '\0';
+            send_message(c_socket_fd, &c_address, c_msg, 7);
 
             if (first_byte_num >= byte_0 + ((3 * bsize) / 4) && !p_started) {
                 p_started = true;
@@ -221,6 +271,8 @@ int main(int argc, char *argv[]) {
         printer.join();
     }
     delete[] buffer;
+    CHECK_ERRNO(setsockopt(socket_fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, (void*)&ip_mreq,
+                           sizeof(ip_mreq)));
     CHECK_ERRNO(close(socket_fd));
 
     return 0;

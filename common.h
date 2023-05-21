@@ -14,11 +14,20 @@
 
 #include "err.h"
 
-#define DEFAULT_PORT "28422"
+#define DEFAULT_CONTROL "38422"
+#define DEFAULT_RTIME 250
+
+#define UDP_MAX_SIZE 65507
 
 using byte_t = uint8_t;
 
 inline static uint16_t read_port(char *string) {
+    for (char *c = string; *c != '\0'; c++) {
+        if (*c < '0' || *c > '9') {
+            fatal("%s is not a valid port number", string);
+        }
+    }
+
     errno = 0;
     unsigned long port = strtoul(string, nullptr, 10);
     PRINT_ERRNO();
@@ -45,22 +54,25 @@ uint64_t ntohll(uint64_t x) {
 #endif
 }
 
-int bind_socket(uint16_t port) {
-    int socket_fd = socket(AF_INET, SOCK_DGRAM, 0); // creating IPv4 UDP socket
-    ENSURE(socket_fd >= 0);
-    // after socket() call; we should close(sock) on any execution path;
-
+inline static void bind_socket(int socket_fd, uint16_t port) {
     // making the socket non-blocking
     fcntl(socket_fd, F_SETFL, O_NONBLOCK);
 
-    struct sockaddr_in server_address;
-    server_address.sin_family = AF_INET; // IPv4
-    server_address.sin_addr.s_addr = htonl(INADDR_ANY); // listening on all interfaces
-    server_address.sin_port = htons(port);
+    struct sockaddr_in address;
+    address.sin_family = AF_INET; // IPv4
+    address.sin_addr.s_addr = htonl(INADDR_ANY); // listening on all interfaces
+    address.sin_port = htons(port);
 
     // bind the socket to a concrete address
-    CHECK_ERRNO(bind(socket_fd, (struct sockaddr *) &server_address,
-                     (socklen_t) sizeof(server_address)));
+    CHECK_ERRNO(bind(socket_fd, (struct sockaddr *) &address,
+                     (socklen_t) sizeof(address)));
+}
+
+inline static int open_udp_socket() {
+    int socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (socket_fd < 0) {
+        PRINT_ERRNO();
+    }
 
     return socket_fd;
 }
