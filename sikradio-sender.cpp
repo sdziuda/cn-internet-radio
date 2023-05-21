@@ -109,7 +109,7 @@ void listen_control(char* addr, uint16_t port) {
     struct ip_mreq ip_mreq;
     ip_mreq.imr_interface.s_addr = htonl(INADDR_ANY);
     if (inet_aton(addr, &ip_mreq.imr_multiaddr) == 0) {
-        fatal("inet_aton - invalid multicast address\n");
+        fatal("inet_aton - invalid multicast address");
     }
 
     CHECK_ERRNO(setsockopt(socket_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void*)&ip_mreq,
@@ -137,8 +137,6 @@ int main(int argc, char *argv[]) {
     size_t psize, fsize;
     uint64_t rtime;
 
-    install_signal_handler(SIGINT, catch_int, SA_RESTART);
-
     read_program_options(argc, argv, address_input, d_port_input, c_port_input,
                          psize, fsize, rtime, name);
 
@@ -163,10 +161,16 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
+    int socket_fd = open_udp_socket();
+    struct sockaddr_in send_address;
+    send_address.sin_family = AF_INET;
+    send_address.sin_port = htons(d_port_num);
+    if (inet_aton(addr, &send_address.sin_addr) == 0) {
+        fatal("inet_aton - invalid multicast address");
+    }
+
     std::thread control_thread(listen_control, addr, c_port_num);
 
-    int socket_fd = open_udp_socket();
-    struct sockaddr_in send_address = get_address(addr, d_port_num);
     uint64_t session_id = time(nullptr);
     uint64_t net_session_id = htonll(session_id);
     uint64_t first_byte_num = 0;
