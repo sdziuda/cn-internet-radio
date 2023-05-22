@@ -32,11 +32,13 @@ static void catch_int(int sig) {
 }
 
 void helpAndExit(string name) {
-    std::cerr << "usage: " << name << " -d [discovery_address: default "
-              << DEFAULT_DISCOVER << "] " << "-C [control_port: default "
-              << DEFAULT_CONTROL << "] -U [ui_port: default " << DEFAULT_UI
-              << "] -b [BSIZE: default " << DEFAULT_BSIZE << "] -R [RTIME: "
-              <<"default " << DEFAULT_RTIME << "] -n [name: default None]"
+    std::cerr << "usage: " << name << " "
+              << "-d [discovery_address: default " << DEFAULT_DISCOVER << "] "
+              << "-C [control_port: default " << DEFAULT_CONTROL << "] "
+              << "-U [ui_port: default " << DEFAULT_UI << "] "
+              << "-b [BSIZE: default " << DEFAULT_BSIZE << "] "
+              << "-R [RTIME: default " << DEFAULT_RTIME << "] "
+              << "-n [name: default None]"
               << std::endl;
     exit(1);
 }
@@ -246,15 +248,28 @@ int main(int argc, char *argv[]) {
             }
             lock.unlock();
 
-            char *c_msg = new char[7];
-            c_msg[0] = 'L';
-            c_msg[1] = 'O';
-            c_msg[2] = 'O';
-            c_msg[3] = 'K';
-            c_msg[4] = 'U';
-            c_msg[5] = 'P';
-            c_msg[6] = '\0';
-            send_message(c_socket_fd, &c_address, c_msg, 7);
+//            byte_t control_msg[LOOKUP_HEADER_SIZE];
+//            memcpy(control_msg, LOOKUP_HEADER, LOOKUP_HEADER_SIZE);
+//            send_message(c_socket_fd, &c_address, control_msg, LOOKUP_HEADER_SIZE);
+//            struct sockaddr_in control_address{};
+//            byte_t c_buffer[UDP_MAX_SIZE];
+//
+//            while (true) {
+//                size_t reply_length = read_message(c_socket_fd, &control_address,
+//                                                   c_buffer, sizeof(c_buffer));
+//                if (reply_length == 0) {
+//                    continue;
+//                }
+//
+//                string reply((char *)c_buffer, reply_length);
+//                std::cerr << "Received: " << reply;
+//                break;
+//            }
+
+            string msg = "LOUDER_PLEASE 0\n";
+            byte_t rexmit_msg[strlen(msg.c_str())];
+            memcpy(rexmit_msg, msg.c_str(), strlen(msg.c_str()));
+            send_message(c_socket_fd, &c_address, rexmit_msg, strlen(msg.c_str()));
 
             if (first_byte_num >= byte_0 + ((3 * bsize) / 4) && !p_started) {
                 p_started = true;

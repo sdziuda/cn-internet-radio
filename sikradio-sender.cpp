@@ -2,10 +2,12 @@
 #include <iostream>
 #include <cstring>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <ctime>
 #include <cstdio>
 #include <thread>
 #include <mutex>
+#include <queue>
 #include "common.h"
 
 #define DEFAULT_PORT "28422"
@@ -17,14 +19,18 @@ using std::string;
 namespace po = boost::program_options;
 
 bool finished = false;
+std::mutex send_mutex;
 
 void help_and_exit(string name) {
-    std::cerr << "usage: " << name << " -a [multicast_address: required] "
-              << "-p [PSIZE: default 512] -f [FSIZE: default " << DEFAULT_FSIZE
-              << "] -P [data_port: default " << DEFAULT_PORT << "] -C "
-              << "[control_port: default " << DEFAULT_CONTROL << "] -R [RTIME: "
-              << "default " << DEFAULT_RTIME << "] -n [name: default "
-              << DEFAULT_NAME << "]" << std::endl;
+    std::cerr << "usage: " << name << " "
+              << "-a [multicast_address: required] "
+              << "-p [PSIZE: default " << DEFAULT_PSIZE << "] "
+              << "-f [FSIZE: default " << DEFAULT_FSIZE << "] "
+              << "-P [data_port: default " << DEFAULT_PORT << "] "
+              << "-C [control_port: default " << DEFAULT_CONTROL << "] "
+              << "-R [RTIME: default " << DEFAULT_RTIME << "] "
+              << "-n [name: default " << DEFAULT_NAME << "]"
+              << std::endl;
     exit(1);
 }
 
@@ -60,7 +66,7 @@ void read_program_options(int argc, char *argv[], string &address, string &d_por
     po::options_description desc("Program options");
     desc.add_options()
         ("a,a", po::value<string>(), "address")
-        ("P,P", po::value<string>()->default_value(DEFAULT_PORT), "port")
+        ("P,P", po::value<string>()->default_value(DEFAULT_PORT), "data port")
         ("C,C", po::value<string>()->default_value(DEFAULT_CONTROL), "control port")
         ("p,p", po::value<size_t>()->default_value(DEFAULT_PSIZE), "PSIZE")
         ("f,f", po::value<size_t>()->default_value(DEFAULT_FSIZE), "FSIZE")
@@ -101,35 +107,117 @@ void read_program_options(int argc, char *argv[], string &address, string &d_por
     }
 }
 
-void listen_control(char* addr, uint16_t port) {
+void create_lookup_reply(byte_t *response, char* addr, char* port, char* name) {
+    size_t index = 0;
+    memcpy(response + index, "BOREWICZ_HERE ", 14);
+    index += 14;
+    memcpy(response + index, addr, strlen(addr));
+    index += strlen(addr);
+    response[index++] = ' ';
+    memcpy(response + index, port, strlen(port));
+    index += strlen(port);
+    response[index++] = ' ';
+    memcpy(response + index, name, strlen(name));
+    index += strlen(name);
+    response[index++] = '\n';
+}
+
+void parse_rexmit(string message, std::set<uint64_t> &rexmit) {
+    size_t index = 14;
+    while (index < message.size()) {
+        size_t comma = message.find(',', index);
+        if (comma == string::npos) {
+            comma = message.size();
+        }
+        uint64_t number = stoull(message.substr(index, comma - index));
+        rexmit.insert(number);
+        index = comma + 1;
+    }
+}
+
+void resend(std::set<uint64_t> rexmit, uint64_t session_id, size_t psize,
+            int socket_fd, uint16_t port_num, char *addr) {
+    std::unique_lock<std::mutex> lock(send_mutex, std::defer_lock);
+
+    struct sockaddr_in send_address;
+    send_address.sin_family = AF_INET;
+    send_address.sin_port = htons(port_num);
+    if (inet_aton(addr, &send_address.sin_addr) == 0) {
+        fatal("inet_aton - invalid multicast address");
+    }
+
+    byte_t buffer[psize + 2 * sizeof(uint64_t)];
+    memcpy(buffer, &session_id, sizeof(uint64_t));
+
+    while (!rexmit.empty()) {
+        uint64_t number = *rexmit.begin();
+        rexmit.erase(rexmit.begin());
+
+        memcpy(buffer + sizeof(uint64_t), &number, sizeof(uint64_t));
+        memcpy(buffer + 2 * sizeof(uint64_t), "re\n", psize);
+
+        lock.lock();
+        send_message(socket_fd, &send_address, buffer, psize + 2 * sizeof(uint64_t));
+        lock.unlock();
+    }
+}
+
+void listen_control(char* addr, char* port, uint16_t port_num, char* name,
+                    uint64_t rtime, uint64_t session_id, size_t psize,
+                    int send_socket_fd, uint16_t send_port_num) {
     byte_t buffer[UDP_MAX_SIZE];
     memset(buffer, 0, sizeof(buffer));
 
     int socket_fd = open_udp_socket();
-    struct ip_mreq ip_mreq;
-    ip_mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-    if (inet_aton(addr, &ip_mreq.imr_multiaddr) == 0) {
-        fatal("inet_aton - invalid multicast address");
-    }
-
-    CHECK_ERRNO(setsockopt(socket_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void*)&ip_mreq,
-                           sizeof(ip_mreq)));
-    bind_socket(socket_fd, port);
+    bind_socket(socket_fd, port_num);
 
     struct sockaddr_in sender_address;
 
+    std::set<uint64_t> packets_to_resend;
+    struct timeval last;
+    gettimeofday(&last, NULL);
+    std::thread retransmission;
+    bool r_started = false;
+
     while (!finished) {
+        struct timeval now, diff;
+        gettimeofday(&now, NULL);
+        timersub(&now, &last, &diff);
+        uint64_t time_passed = diff.tv_sec * 1000 + diff.tv_usec / 1000;
+        if (time_passed >= rtime || !r_started) {
+            last = now;
+            if (r_started) {
+                retransmission.join();
+                r_started = false;
+            }
+            retransmission = std::thread(resend, packets_to_resend, session_id,
+                                         psize, send_socket_fd, send_port_num, addr);
+            r_started = true;
+            packets_to_resend.clear();
+        }
+
         size_t read_length = read_message(socket_fd, &sender_address, buffer,
                                           sizeof(buffer));
         if (read_length == 0) {
             continue;
         }
 
-        printf("%.*s\n", (int)read_length, buffer);
+        string message = string((char *)buffer, read_length);
+        std::cerr << "message: " << message;
+
+        if (strcmp(message.c_str(), LOOKUP_HEADER) == 0) {
+            byte_t reply[14 + strlen(addr) + strlen(port) + strlen(name) + 3];
+            create_lookup_reply(reply, addr, port, name);
+            send_message(socket_fd, &sender_address, &reply, sizeof(reply));
+        } else if (strncmp(message.c_str(), REXMIT_HEADER, REXMIT_HEADER_SIZE) == 0) {
+            parse_rexmit(message, packets_to_resend);
+        }
     }
 
-    CHECK_ERRNO(setsockopt(socket_fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, (void*)&ip_mreq,
-                           sizeof(ip_mreq)));
+    if (r_started) {
+        retransmission.join();
+    }
+    CHECK_ERRNO(close(socket_fd));
 }
 
 int main(int argc, char *argv[]) {
@@ -140,17 +228,10 @@ int main(int argc, char *argv[]) {
     read_program_options(argc, argv, address_input, d_port_input, c_port_input,
                          psize, fsize, rtime, name);
 
-    std::cerr << "address: " << address_input << std::endl;
-    std::cerr << "data port: " << d_port_input << std::endl;
-    std::cerr << "control port: " << c_port_input << std::endl;
-    std::cerr << "psize: " << psize << std::endl;
-    std::cerr << "fsize: " << fsize << std::endl;
-    std::cerr << "rtime: " << rtime << std::endl;
-    std::cerr << "name: " << name << std::endl;
-
     char *addr = (char *) address_input.c_str();
     char *d_port = (char *) d_port_input.c_str();
     char *c_port = (char *) c_port_input.c_str();
+    byte_t read_buffer[psize];
     byte_t buffer[psize + sizeof(uint64_t) * 2];
     memset(buffer, 0, sizeof(buffer));
 
@@ -169,25 +250,31 @@ int main(int argc, char *argv[]) {
         fatal("inet_aton - invalid multicast address");
     }
 
-    std::thread control_thread(listen_control, addr, c_port_num);
-
     uint64_t session_id = time(nullptr);
     uint64_t net_session_id = htonll(session_id);
     uint64_t first_byte_num = 0;
     memcpy(buffer, &net_session_id, sizeof(net_session_id));
 
+    std::unique_lock<std::mutex> lock(send_mutex, std::defer_lock);
+    std::thread control_thread(listen_control, addr, c_port, c_port_num,
+                               (char *) name.c_str(), rtime, net_session_id,
+                               psize, socket_fd, d_port_num);
+
     while (true) {
         uint64_t net_first_byte_num = htonll(first_byte_num);
         memcpy(buffer + sizeof(uint64_t), &net_first_byte_num, sizeof(uint64_t));
 
-        size_t read_bytes = fread(buffer + sizeof(uint64_t) * 2, sizeof(byte_t),
-                                  psize, stdin);
+        size_t read_bytes = fread(read_buffer, sizeof(byte_t), psize, stdin);
 
         if (read_bytes < psize) {
             break;
         }
 
+        memcpy(buffer + sizeof(uint64_t) * 2, read_buffer, psize);
+
+        lock.lock();
         send_message(socket_fd, &send_address, &buffer, sizeof(buffer));
+        lock.unlock();
 
         first_byte_num += psize;
     }

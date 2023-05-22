@@ -16,8 +16,11 @@
 
 #define DEFAULT_CONTROL "38422"
 #define DEFAULT_RTIME 250
-
 #define UDP_MAX_SIZE 65507
+#define LOOKUP_HEADER "ZERO_SEVEN_COME_IN\n"
+#define LOOKUP_HEADER_SIZE 19
+#define REXMIT_HEADER "LOUDER_PLEASE "
+#define REXMIT_HEADER_SIZE 14
 
 using byte_t = uint8_t;
 
