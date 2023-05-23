@@ -173,11 +173,11 @@ int main(int argc, char *argv[]) {
 
             uint64_t tmp_id;
             memcpy(&tmp_id, rcv_buffer, sizeof(uint64_t));
-            tmp_id = ntohll(tmp_id);
+            tmp_id = be64toh(tmp_id);
 
             uint64_t first_byte_num;
             memcpy(&first_byte_num, rcv_buffer + sizeof(uint64_t), sizeof(uint64_t));
-            first_byte_num = ntohll(first_byte_num);
+            first_byte_num = be64toh(first_byte_num);
 
             if (!session_set) {
                 session_id = tmp_id;
@@ -267,6 +267,9 @@ int main(int argc, char *argv[]) {
 //            }
 
             string msg = "LOUDER_PLEASE 0\n";
+            if (strncmp((char *) (buffer + buf_position), "as\n", 3) == 0) {
+                msg = "LOUDER_PLEASE 3\n";
+            }
             byte_t rexmit_msg[strlen(msg.c_str())];
             memcpy(rexmit_msg, msg.c_str(), strlen(msg.c_str()));
             send_message(c_socket_fd, &c_address, rexmit_msg, strlen(msg.c_str()));

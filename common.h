@@ -41,22 +41,6 @@ inline static uint16_t read_port(char *string) {
     return (uint16_t) port;
 }
 
-uint64_t htonll(uint64_t x) {
-#if __BIG_ENDIAN__
-    return x;
-#else
-    return ((uint64_t)htonl((x) & 0xFFFFFFFFLL) << 32) | htonl((x) >> 32);
-#endif
-}
-
-uint64_t ntohll(uint64_t x) {
-#if __BIG_ENDIAN__
-    return x;
-#else
-    return ((uint64_t)ntohl((x) & 0xFFFFFFFFLL) << 32) | ntohl((x) >> 32);
-#endif
-}
-
 inline static void bind_socket(int socket_fd, uint16_t port) {
     // making the socket non-blocking
     fcntl(socket_fd, F_SETFL, O_NONBLOCK);
@@ -101,7 +85,7 @@ inline static struct sockaddr_in get_address(char *host, uint16_t port) {
     return address;
 }
 
-void send_message(int socket_fd, const struct sockaddr_in *send_address,
+inline void send_message(int socket_fd, const struct sockaddr_in *send_address,
                   const void *message, size_t message_length) {
     int send_flags = 0;
     auto address_length = (socklen_t) sizeof(*send_address);
@@ -114,7 +98,7 @@ void send_message(int socket_fd, const struct sockaddr_in *send_address,
     ENSURE(sent_length == (ssize_t) message_length);
 }
 
-size_t read_message(int socket_fd, struct sockaddr_in *client_address,
+inline size_t read_message(int socket_fd, struct sockaddr_in *client_address,
                     void *buffer, size_t max_length) {
     auto address_length = (socklen_t) sizeof(*client_address);
     int flags = 0; // we do not request anything special

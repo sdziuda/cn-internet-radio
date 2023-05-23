@@ -1,21 +1,22 @@
 #ifndef MIMUW_SIK_ERR_H
 #define MIMUW_SIK_ERR_H
 
-#include <stdio.h>
+#include <cstdio>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <errno.h>
 #include <stdbool.h>
 
 // Evaluate `x`: if non-zero, describe it as a standard error code and exit with an error.
-#define CHECK(x)                                                          \
-    do {                                                                  \
-        int err = (x);                                                    \
-        if (err != 0) {                                                   \
-            fprintf(stderr, "Error: %s returned %d in %s at %s:%d\n%s\n", \
-                #x, err, __func__, __FILE__, __LINE__, strerror(err));    \
-            exit(EXIT_FAILURE);                                           \
-        }                                                                 \
+#define CHECK(x)                                                            \
+    do {                                                                    \
+        int err = (x);                                                      \
+        if (err != 0) {                                                     \
+            std::cerr << "Error: " << #x << " returned " << err << " in "   \
+                      << __func__ << " at " << __FILE__ << ":" << __LINE__  \
+                      << "\n" << strerror(err) << "\n";                     \
+            exit(EXIT_FAILURE);                                             \
+        }                                                                   \
     } while (0)
 
 // Evaluate `x`: if false, print an error message and exit with an error.
@@ -23,20 +24,21 @@
     do {                                                                  \
         bool result = (x);                                                \
         if (!result) {                                                    \
-            fprintf(stderr, "Error: %s was false in %s at %s:%d\n",       \
-                #x, __func__, __FILE__, __LINE__);                        \
+            std::cerr << "Error: " << #x << " was false in " << __func__  \
+                      << " at " << __FILE__ << ":" << __LINE__ << "\n";   \
             exit(EXIT_FAILURE);                                           \
         }                                                                 \
     } while (0)
 
 // Check if errno is non-zero, and if so, print an error message and exit with an error.
-#define PRINT_ERRNO()                                                  \
-    do {                                                               \
-        if (errno != 0) {                                              \
-            fprintf(stderr, "Error: errno %d in %s at %s:%d\n%s\n",    \
-              errno, __func__, __FILE__, __LINE__, strerror(errno));   \
-            exit(EXIT_FAILURE);                                        \
-        }                                                              \
+#define PRINT_ERRNO()                                                   \
+do {                                                                    \
+        if (errno != 0) {                                               \
+            std::cerr << "Error: errno " << errno << " in " << __func__ \
+                      << " at " << __FILE__ << ":" << __LINE__ << "\n"  \
+                      << strerror(errno) << "\n";                       \
+            exit(EXIT_FAILURE);                                         \
+        }                                                               \
     } while (0)
 
 
@@ -56,11 +58,11 @@
 inline static void fatal(const char *fmt, ...) {
     va_list fmt_args;
 
-    fprintf(stderr, "Error: ");
+    std::cerr << "Error: ";
     va_start(fmt_args, fmt);
     vfprintf(stderr, fmt, fmt_args);
     va_end(fmt_args);
-    fprintf(stderr, "\n");
+    std::cerr << "\n";
     exit(EXIT_FAILURE);
 }
 
