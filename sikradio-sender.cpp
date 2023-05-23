@@ -17,7 +17,7 @@
 using std::string;
 namespace po = boost::program_options;
 
-bool finished = false;
+bool control_finished = false;
 std::mutex send_mutex;
 byte_t *retransmission_buffer = nullptr;
 std::set<uint64_t> retransmission_set;
@@ -162,9 +162,9 @@ namespace {
 
 
             size_t index = number - *retransmission_set.begin();
-            std::cerr << "retransmit: " << index << std::endl;
+            std::cerr << "retransmit: " << index << " ";
             memcpy(buffer + 2 * sizeof(uint64_t), retransmission_buffer + index, psize);
-            std::cerr << "retransmit: " << buffer << std::endl;
+            std::cerr.write((char *) (buffer + 2 * sizeof(uint64_t)), psize);
 
             send_message(socket_fd, &send_address, buffer,
                          psize + 2 * sizeof(uint64_t));
@@ -190,7 +190,7 @@ namespace {
         std::thread retransmission;
         bool r_started = false;
 
-        while (!finished) {
+        while (!control_finished) {
             struct timeval now{}, diff{};
             gettimeofday(&now, nullptr);
             timersub(&now, &last, &diff);
@@ -298,7 +298,7 @@ int main(int argc, char *argv[]) {
         memcpy(buffer + sizeof(uint64_t) * 2, read_buffer, psize);
 
         lock.lock();
-        if (retransmission_set.size() > fsize / psize) {
+        if (retransmission_set.size() >= fsize / psize) {
             retransmission_set.erase(retransmission_set.begin());
             retransmission_set.insert(first_byte_num);
         } else {
@@ -320,7 +320,7 @@ int main(int argc, char *argv[]) {
         first_byte_num += psize;
     }
 
-    finished = true;
+    control_finished = true;
     control_thread.join();
     delete[] retransmission_buffer;
 
