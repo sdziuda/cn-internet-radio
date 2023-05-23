@@ -21,7 +21,7 @@ namespace po = boost::program_options;
 bool finished = false;
 std::mutex send_mutex;
 
-void help_and_exit(string name) {
+void help_and_exit(const string& name) {
     std::cerr << "usage: " << name << " "
               << "-a [multicast_address: required] "
               << "-p [PSIZE: default " << DEFAULT_PSIZE << "] "
@@ -35,7 +35,7 @@ void help_and_exit(string name) {
 }
 
 bool check_name(string name) {
-    if (name.size() == 0) {
+    if (name.empty()) {
         return false;
     }
 
@@ -43,10 +43,8 @@ bool check_name(string name) {
         return false;
     }
 
-    for (char c : name) {
-        if (c < 32 || c > 127) {
-            return false;
-        }
+    if (!std::ranges::all_of (name, [](char c) { return c >= 32 && c <= 127; })) {
+        return false;
     }
 
     return true;
@@ -122,7 +120,7 @@ void create_lookup_reply(byte_t *response, char* addr, char* port, char* name) {
     response[index++] = '\n';
 }
 
-void parse_rexmit(string message, std::set<uint64_t> &rexmit) {
+void parse_rexmit(const string& message, std::set<uint64_t> &rexmit) {
     size_t index = 14;
     while (index < message.size()) {
         size_t comma = message.find(',', index);
@@ -139,7 +137,7 @@ void resend(std::set<uint64_t> rexmit, uint64_t session_id, size_t psize,
             int socket_fd, uint16_t port_num, char *addr) {
     std::unique_lock<std::mutex> lock(send_mutex, std::defer_lock);
 
-    struct sockaddr_in send_address;
+    struct sockaddr_in send_address{};
     send_address.sin_family = AF_INET;
     send_address.sin_port = htons(port_num);
     if (inet_aton(addr, &send_address.sin_addr) == 0) {
@@ -171,24 +169,23 @@ void listen_control(char* addr, char* port, uint16_t port_num, char* name,
     int socket_fd = open_udp_socket();
     bind_socket(socket_fd, port_num);
 
-    struct sockaddr_in sender_address;
+    struct sockaddr_in sender_address{};
 
     std::set<uint64_t> packets_to_resend;
-    struct timeval last;
-    gettimeofday(&last, NULL);
+    struct timeval last{};
+    gettimeofday(&last, nullptr);
     std::thread retransmission;
     bool r_started = false;
 
     while (!finished) {
-        struct timeval now, diff;
-        gettimeofday(&now, NULL);
+        struct timeval now{}, diff{};
+        gettimeofday(&now, nullptr);
         timersub(&now, &last, &diff);
         uint64_t time_passed = diff.tv_sec * 1000 + diff.tv_usec / 1000;
         if (time_passed >= rtime || !r_started) {
             last = now;
             if (r_started) {
                 retransmission.join();
-                r_started = false;
             }
             retransmission = std::thread(resend, packets_to_resend, session_id,
                                          psize, send_socket_fd, send_port_num, addr);
@@ -243,12 +240,19 @@ int main(int argc, char *argv[]) {
     }
 
     int socket_fd = open_udp_socket();
-    struct sockaddr_in send_address;
+    struct sockaddr_in send_address{};
     send_address.sin_family = AF_INET;
     send_address.sin_port = htons(d_port_num);
     if (inet_aton(addr, &send_address.sin_addr) == 0) {
         fatal("inet_aton - invalid multicast address");
     }
+    struct ip_mreq ip_mreq{};
+    ip_mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+    if (inet_aton(addr, &ip_mreq.imr_multiaddr) == 0) {
+        fatal("inet_aton - invalid multicast address\n");
+    }
+    CHECK_ERRNO(setsockopt(socket_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &ip_mreq,
+                           sizeof(ip_mreq)));
 
     uint64_t session_id = time(nullptr);
     uint64_t net_session_id = htonll(session_id);
@@ -282,6 +286,8 @@ int main(int argc, char *argv[]) {
     finished = true;
     control_thread.join();
 
+    CHECK_ERRNO(setsockopt(socket_fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, &ip_mreq,
+                           sizeof(ip_mreq)));
     CHECK_ERRNO(close(socket_fd));
 
     return 0;
