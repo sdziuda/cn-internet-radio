@@ -119,8 +119,21 @@ namespace {
         response[index++] = '\n';
     }
 
+    // checks and parses rexmit requests
     void parse_rexmit(const string &message, std::set<uint64_t> &rexmit) {
-        size_t index = 14;
+        if (message[message.size() - 1] != '\n') {
+            return;
+        }
+
+        size_t index = REXMIT_HEADER_SIZE;
+        while (index < message.size() - 1) {
+            if ((message[index] < '0' || message[index] > '9') && message[index] != ',') {
+                return;
+            }
+            index++;
+        }
+
+        index = REXMIT_HEADER_SIZE;
         while (index < message.size()) {
             size_t comma = message.find(',', index);
             if (comma == string::npos) {
@@ -132,17 +145,50 @@ namespace {
         }
     }
 
+    size_t get_position_in_buffer(uint64_t num, size_t psize, size_t fsize) {
+        size_t buf_position = num;
+        if (buf_position >= fsize) {
+            buf_position = buf_position % fsize + (fsize % psize);
+        }
+        if (buf_position + psize > fsize) {
+            buf_position = 0;
+        }
+        return buf_position;
+    }
 
+    // saves the input data for later in case of retransmission
+    void save_for_retransmission(uint64_t num, size_t psize, size_t fsize, byte_t *buffer) {
+        if (retransmission_set.size() >= fsize / psize) {
+            retransmission_set.erase(retransmission_set.begin());
+            retransmission_set.insert(num);
+        } else {
+            retransmission_set.insert(num);
+        }
+
+        size_t buf_position = get_position_in_buffer(num, psize, fsize);
+        memcpy(retransmission_buffer + buf_position, buffer, psize);
+    }
+
+    // function for the thread handling retransmission
     void resend(std::set<uint64_t> rexmit, uint64_t session_id, size_t psize,
-                int socket_fd, uint16_t port_num, char *addr) {
+                size_t fsize, uint16_t port_num, char *addr) {
         std::unique_lock<std::mutex> lock(send_mutex, std::defer_lock);
 
+        // setting up socket and address
+        int socket_fd = open_udp_socket();
         struct sockaddr_in send_address{};
         send_address.sin_family = AF_INET;
         send_address.sin_port = htons(port_num);
         if (inet_aton(addr, &send_address.sin_addr) == 0) {
             fatal("inet_aton - invalid multicast address");
         }
+        struct ip_mreq ip_mreq{};
+        ip_mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+        if (inet_aton(addr, &ip_mreq.imr_multiaddr) == 0) {
+            fatal("inet_aton - invalid multicast address\n");
+        }
+        CHECK_ERRNO(setsockopt(socket_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &ip_mreq,
+                               sizeof(ip_mreq)));
 
         byte_t buffer[psize + 2 * sizeof(uint64_t)];
         memcpy(buffer, &session_id, sizeof(uint64_t));
@@ -160,22 +206,24 @@ namespace {
                 continue;
             }
 
-
-            size_t index = number - *retransmission_set.begin();
+            size_t index = get_position_in_buffer(number, psize, fsize);
             std::cerr << "retransmit: " << index << " ";
             memcpy(buffer + 2 * sizeof(uint64_t), retransmission_buffer + index, psize);
             std::cerr.write((char *) (buffer + 2 * sizeof(uint64_t)), psize);
-
-            send_message(socket_fd, &send_address, buffer,
-                         psize + 2 * sizeof(uint64_t));
             lock.unlock();
+
+            send_message(socket_fd, &send_address, buffer, psize + 2 * sizeof(uint64_t));
         }
+
+        CHECK_ERRNO(setsockopt(socket_fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, &ip_mreq,
+                               sizeof(ip_mreq)));
+        CHECK_ERRNO(close(socket_fd));
     }
 
-
+    // function for the thread listening for control messages
     void listen_control(char *addr, char *port, uint16_t port_num, char *name,
                         uint64_t rtime, uint64_t session_id, size_t psize,
-                        int send_socket_fd, uint16_t send_port_num) {
+                        size_t fsize, uint16_t send_port_num) {
         byte_t buffer[UDP_MAX_SIZE];
         memset(buffer, 0, sizeof(buffer));
 
@@ -201,8 +249,7 @@ namespace {
                     retransmission.join();
                 }
                 retransmission = std::thread(resend, packets_to_resend, session_id,
-                                             psize, send_socket_fd, send_port_num,
-                                             addr);
+                                             psize, fsize, send_port_num, addr);
                 r_started = true;
                 packets_to_resend.clear();
             }
@@ -220,8 +267,7 @@ namespace {
                 byte_t reply[14 + strlen(addr) + strlen(port) + strlen(name) + 3];
                 create_lookup_reply(reply, addr, port, name);
                 send_message(socket_fd, &sender_address, &reply, sizeof(reply));
-            } else if (strncmp(message.c_str(), REXMIT_HEADER,
-                               REXMIT_HEADER_SIZE) == 0) {
+            } else if (strncmp(message.c_str(), REXMIT_HEADER, REXMIT_HEADER_SIZE) == 0) {
                 parse_rexmit(message, packets_to_resend);
             }
         }
@@ -254,6 +300,7 @@ int main(int argc, char *argv[]) {
         fatal("data port and control port cannot be the same");
     }
 
+    // setting up the socket and the multicast address
     int socket_fd = open_udp_socket();
     struct sockaddr_in send_address{};
     send_address.sin_family = AF_INET;
@@ -283,8 +330,9 @@ int main(int argc, char *argv[]) {
     std::unique_lock<std::mutex> lock(send_mutex, std::defer_lock);
     std::thread control_thread(listen_control, addr, c_port, c_port_num,
                                (char *) name.c_str(), rtime, net_session_id,
-                               psize, socket_fd, d_port_num);
+                               psize, fsize, d_port_num);
 
+    // the main loop, reading data from input and sending it to the multicast
     while (true) {
         uint64_t net_first_byte_num = htobe64(first_byte_num);
         memcpy(buffer + sizeof(uint64_t), &net_first_byte_num, sizeof(uint64_t));
@@ -298,24 +346,10 @@ int main(int argc, char *argv[]) {
         memcpy(buffer + sizeof(uint64_t) * 2, read_buffer, psize);
 
         lock.lock();
-        if (retransmission_set.size() >= fsize / psize) {
-            retransmission_set.erase(retransmission_set.begin());
-            retransmission_set.insert(first_byte_num);
-        } else {
-            retransmission_set.insert(first_byte_num);
-        }
-
-        size_t buf_position = first_byte_num;
-        if (buf_position >= fsize) {
-            buf_position = buf_position % fsize + (fsize % psize);
-        }
-        if (buf_position + psize > fsize) {
-            buf_position = 0;
-        }
-        memcpy(retransmission_buffer + buf_position, read_buffer, psize);
+        save_for_retransmission(first_byte_num, psize, fsize, read_buffer);
+        lock.unlock();
 
         send_message(socket_fd, &send_address, &buffer, sizeof(buffer));
-        lock.unlock();
 
         first_byte_num += psize;
     }
