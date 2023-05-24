@@ -272,7 +272,8 @@ int main(int argc, char *argv[]) {
             }
             byte_t rexmit_msg[strlen(msg.c_str())];
             memcpy(rexmit_msg, msg.c_str(), strlen(msg.c_str()));
-            send_message(c_socket_fd, &c_address, rexmit_msg, strlen(msg.c_str()));
+            sender_address.sin_port = htons(c_port_num);
+            send_message(c_socket_fd, &sender_address, rexmit_msg, strlen(msg.c_str()));
 
             if (first_byte_num >= byte_0 + ((3 * bsize) / 4) && !p_started) {
                 p_started = true;

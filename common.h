@@ -20,7 +20,7 @@
 #define LOOKUP_HEADER "ZERO_SEVEN_COME_IN\n"
 #define LOOKUP_HEADER_SIZE 19
 #define REXMIT_HEADER "LOUDER_PLEASE "
-#define REXMIT_HEADER_SIZE 14
+#define REXMIT_HEADER_SIZE strlen(REXMIT_HEADER)
 
 using byte_t = uint8_t;
 
