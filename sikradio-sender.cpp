@@ -4,6 +4,7 @@
 #include <sys/socket.h>
 #include <ctime>
 #include <cstdio>
+#include <queue>
 #include <thread>
 #include <mutex>
 #include <atomic>
@@ -26,7 +27,7 @@ std::mutex sleep_mutex;
 std::condition_variable sleep_cv;
 byte_t *retransmission_buffer = nullptr;
 std::set<uint64_t> retransmission_set;
-std::set<uint64_t> packets_to_resend;
+std::queue<uint64_t> packets_to_resend;
 
 namespace {
     void help_and_exit(const string &name) {
@@ -148,7 +149,7 @@ namespace {
             }
             uint64_t number = stoull(message.substr(index, comma - index));
             lock.lock();
-            packets_to_resend.insert(number);
+            packets_to_resend.push(number);
             lock.unlock();
             index = comma + 1;
         }
@@ -209,16 +210,16 @@ namespace {
             // setting the start timestamp
             auto start = std::chrono::system_clock::now();
 
-            // moving packets to be retransmitted to rexmit set
+            // moving packets to be retransmitted to this_series queue
             set_lock.lock();
-            std::set<uint64_t> rexmit(packets_to_resend);
-            packets_to_resend.clear();
+            std::queue<uint64_t> this_series;
+            this_series.swap(packets_to_resend);
             set_lock.unlock();
 
             // retransmitting packets
-            while (!rexmit.empty()) {
-                uint64_t number = *rexmit.begin();
-                rexmit.erase(rexmit.begin());
+            while (!this_series.empty()) {
+                uint64_t number = this_series.front();
+                this_series.pop();
 
                 uint64_t net_number = htobe64(number);
                 memcpy(buffer + sizeof(uint64_t), &net_number, sizeof(uint64_t));
@@ -246,7 +247,7 @@ namespace {
                 continue;
             }
 
-            // sleeping for the remaining rtime, unless finished
+            // sleeping for the remaining rtime, unless main thread finished
             std::unique_lock<std::mutex> sleep_lock(sleep_mutex);
             sleep_cv.wait_for(sleep_lock, std::chrono::milliseconds(sleep), [] {
                 return stop_sleeping;
