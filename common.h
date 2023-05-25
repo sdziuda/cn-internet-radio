@@ -4,13 +4,13 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
-#include <stdio.h>
-#include <string.h>
 #include <unistd.h>
-#include <stdint.h>
-#include <signal.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <cstdio>
+#include <cstring>
+#include <cstdint>
+#include <csignal>
 
 #include "err.h"
 
@@ -45,7 +45,7 @@ inline static void bind_socket(int socket_fd, uint16_t port) {
     // making the socket non-blocking
     fcntl(socket_fd, F_SETFL, O_NONBLOCK);
 
-    struct sockaddr_in address;
+    struct sockaddr_in address{};
     address.sin_family = AF_INET; // IPv4
     address.sin_addr.s_addr = htonl(INADDR_ANY); // listening on all interfaces
     address.sin_port = htons(port);
@@ -65,16 +65,16 @@ inline static int open_udp_socket() {
 }
 
 inline static struct sockaddr_in get_address(char *host, uint16_t port) {
-    struct addrinfo hints;
+    struct addrinfo hints{};
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_INET; // IPv4
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
 
     struct addrinfo *address_result;
-    CHECK(getaddrinfo(host, NULL, &hints, &address_result));
+    CHECK(getaddrinfo(host, nullptr, &hints, &address_result));
 
-    struct sockaddr_in address;
+    struct sockaddr_in address{};
     address.sin_family = AF_INET; // IPv4
     address.sin_addr.s_addr =
             ((struct sockaddr_in *) (address_result->ai_addr))->sin_addr.s_addr; // IP address
@@ -115,7 +115,7 @@ inline size_t read_message(int socket_fd, struct sockaddr_in *client_address,
 }
 
 inline static void install_signal_handler(int signal, void (*handler)(int), int flags) {
-    struct sigaction action;
+    struct sigaction action{};
     sigset_t block_mask;
 
     sigemptyset(&block_mask);
@@ -123,7 +123,7 @@ inline static void install_signal_handler(int signal, void (*handler)(int), int 
     action.sa_mask = block_mask;
     action.sa_flags = flags;
 
-    CHECK_ERRNO(sigaction(signal, &action, NULL));
+    CHECK_ERRNO(sigaction(signal, &action, nullptr));
 }
 
 #endif //MIMUW_SIK_TCP_SOCKETS_COMMON_H
