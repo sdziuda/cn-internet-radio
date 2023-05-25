@@ -194,7 +194,8 @@ int main(int argc, char *argv[]) {
                 p_finish = true;
                 received_packets.clear();
                 lock.unlock();
-                printer.join();
+                if (p_started)
+                    printer.join();
                 p_started = false;
 
                 memset(buffer, BLANK, bsize * sizeof(byte_t));
@@ -280,6 +281,8 @@ int main(int argc, char *argv[]) {
                 p_finish = false;
                 printer = std::thread(print_buffer, bsize, psize);
             }
+
+            sender_address = {};
         }
     } while (!finish);
 
