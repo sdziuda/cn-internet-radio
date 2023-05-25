@@ -86,8 +86,7 @@ namespace {
             po::store(po::parse_command_line(argc, argv, desc), vm);
             po::notify(vm);
         } catch (std::exception &e) {
-            std::cerr << "error: " << e.what() << std::endl;
-            exit(1);
+            fatal(e.what());
         }
 
         if (vm.count("a") == 0) {
@@ -113,8 +112,8 @@ namespace {
 
     void create_lookup_reply(byte_t *response, char *addr, char *port, char *name) {
         size_t index = 0;
-        memcpy(response + index, "BOREWICZ_HERE ", 14);
-        index += 14;
+        memcpy(response + index, LOOKUP_REPLY_HEADER, LOOKUP_REPLY_HEADER_SIZE);
+        index += LOOKUP_REPLY_HEADER_SIZE;
         memcpy(response + index, addr, strlen(addr));
         index += strlen(addr);
         response[index++] = ' ';
@@ -231,9 +230,7 @@ namespace {
                 }
 
                 size_t id = get_position_in_buffer(number, psize, fsize);
-                std::cerr << "retransmit: " << id << " ";
                 memcpy(buffer + sizeof(uint64_t) * 2, retransmission_buffer + id, psize);
-                std::cerr.write((char *) (buffer + sizeof(uint64_t) * 2), psize);
                 lock.unlock();
 
                 send_message(socket_fd, &send_address, buffer, psize + sizeof(uint64_t) * 2);
@@ -277,15 +274,16 @@ namespace {
             }
 
             string message = string((char *) buffer, read_length);
-            std::cerr << "message: " << message;
 
             if (strcmp(message.c_str(), LOOKUP_HEADER) == 0) {
-                byte_t reply[14 + strlen(addr) + strlen(port) + strlen(name) + 3];
+                byte_t reply[LOOKUP_REPLY_HEADER_SIZE + strlen(addr) + strlen(port) +
+                             strlen(name) + 3];
                 create_lookup_reply(reply, addr, port, name);
                 send_message(socket_fd, &sender_address, &reply, sizeof(reply));
             } else if (strncmp(message.c_str(), REXMIT_HEADER, REXMIT_HEADER_SIZE) == 0) {
                 parse_rexmit(message);
             }
+            sender_address = {};
         }
 
         CHECK_ERRNO(close(socket_fd));
@@ -341,7 +339,7 @@ int main(int argc, char *argv[]) {
     }
 
     std::unique_lock<std::mutex> lock(buffer_mutex, std::defer_lock);
-    std::thread control_thread(listen_control, addr, c_port, c_port_num,
+    std::thread control_thread(listen_control, addr, d_port, c_port_num,
                                (char *) name.c_str());
     std::thread retransmission_thread(resend, net_session_id, psize, fsize, d_port_num,
                                       addr, rtime);
