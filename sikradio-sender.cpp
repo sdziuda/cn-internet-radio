@@ -22,7 +22,7 @@ namespace po = boost::program_options;
 std::atomic_bool finished = false;
 bool stop_sleeping = false;
 std::mutex buffer_mutex;
-std::mutex packets_set_mutex;
+std::mutex packets_queue_mutex;
 std::mutex sleep_mutex;
 std::condition_variable sleep_cv;
 byte_t *retransmission_buffer = nullptr;
@@ -139,7 +139,7 @@ namespace {
             index++;
         }
 
-        std::unique_lock<std::mutex> lock(packets_set_mutex, std::defer_lock);
+        std::unique_lock<std::mutex> lock(packets_queue_mutex, std::defer_lock);
         index = REXMIT_HEADER_SIZE;
         while (index < message.size()) {
             size_t comma = message.find(',', index);
@@ -184,7 +184,7 @@ namespace {
     void resend(uint64_t net_session_id, size_t psize, size_t fsize, uint16_t port_num,
                 char *addr, uint64_t rtime) {
         std::unique_lock<std::mutex> lock(buffer_mutex, std::defer_lock);
-        std::unique_lock<std::mutex> set_lock(packets_set_mutex, std::defer_lock);
+        std::unique_lock<std::mutex> set_lock(packets_queue_mutex, std::defer_lock);
 
         // setting up socket and address
         int socket_fd = open_udp_socket();
@@ -357,7 +357,9 @@ int main(int argc, char *argv[]) {
 
         memcpy(buffer + sizeof(uint64_t) * 2, read_buffer, psize);
 
-        save_for_retransmission(first_byte_num, psize, fsize, read_buffer);
+        if (fsize >= psize) {
+            save_for_retransmission(first_byte_num, psize, fsize, read_buffer);
+        }
 
         send_message(socket_fd, &send_address, &buffer, sizeof(buffer));
 
