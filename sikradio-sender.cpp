@@ -44,7 +44,7 @@ namespace {
     }
 
     bool check_name(string name) {
-        if (name.empty()) {
+        if (name.empty() || name.size() > 64) {
             return false;
         }
 
@@ -197,7 +197,7 @@ namespace {
         struct ip_mreq ip_mreq{};
         ip_mreq.imr_interface.s_addr = htonl(INADDR_ANY);
         if (inet_aton(addr, &ip_mreq.imr_multiaddr) == 0) {
-            fatal("inet_aton - invalid multicast address\n");
+            fatal("inet_aton - invalid multicast address");
         }
         CHECK_ERRNO(setsockopt(socket_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &ip_mreq,
                                sizeof(ip_mreq)));
@@ -322,7 +322,7 @@ int main(int argc, char *argv[]) {
     struct ip_mreq ip_mreq{};
     ip_mreq.imr_interface.s_addr = htonl(INADDR_ANY);
     if (inet_aton(addr, &ip_mreq.imr_multiaddr) == 0) {
-        fatal("inet_aton - invalid multicast address\n");
+        fatal("inet_aton - invalid multicast address");
     }
     CHECK_ERRNO(setsockopt(socket_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &ip_mreq,
                            sizeof(ip_mreq)));
